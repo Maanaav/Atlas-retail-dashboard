@@ -207,8 +207,9 @@ def _insight_card(title, what, why, action, evidence, conf, icon="✅"):
     )
 
 def show():
-    insights_helpbar()
     st.title("Insights")
+
+    insights_helpbar()
 
     abs_df, _det = load_abs(ABS_FILE)
     rules_df = load_rules(RULES_FILE)

@@ -174,7 +174,7 @@ def _stl_section(df_reg: pd.DataFrame, region_label: str):
     fig.update_layout(height=900, title=f"STL Decomposition — {region_label}", showlegend=False, margin=dict(l=0,r=0,t=60,b=0))
     st.plotly_chart(fig, use_container_width=True)
 
-def show(DATA_DIR_IN: Path | None = None):
+def show():
     st.title("Time Dynamics")
     time_dynamics_helpbar()
 
