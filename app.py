@@ -1,13 +1,20 @@
 import streamlit as st
+import importlib
 from pathlib import Path
-from tabs import overview, patterns, time, insights
 
-# ----------------- PAGE CONFIG -----------------
 st.set_page_config(
     page_title="Atlas – Retail Patterns Dashboard",
     page_icon="🛒",
     layout="wide",
 )
+
+# Hard check: is plotly installed in this environment?
+if importlib.util.find_spec("plotly") is None:
+    st.error("plotly is NOT installed in this Streamlit Cloud environment. "
+             "Cloud is not picking up your requirements.txt.")
+    st.stop()
+
+from tabs import overview, patterns, time_tab, insights
 
 # ----------------- GLOBAL STYLES -----------------
 st.markdown(
@@ -180,6 +187,7 @@ if clean_tab == "Overview":
 elif clean_tab == "Basket Patterns":
     patterns.show()
 elif clean_tab == "Time Dynamics":
-    time.show()
+    time_tab.show()
 else:
     insights.show()
+
