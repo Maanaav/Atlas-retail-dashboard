@@ -18,8 +18,21 @@ PALETTE = {
     "green": "#2CA58D",
     "orange": "#F4A300",
     "grey": "#8F9BA6",
+
+    # Network-specific tones
+    "node_base": "#8DD3C7",      # soft teal for default nodes
+    "node_neighbor": "#1D9A6C",  # richer teal for neighbours
+    "node_focus": "#F97316",     # warm orange for selected node
+    "node_dim": "#CBD5E1",       # light slate for de-emphasised nodes
+    "edge_light": "#E5E7EB",     # light grey edges
 }
-SCATTER_SCALE = [PALETTE["blue"], PALETTE["green"], PALETTE["orange"]]
+
+
+SCATTER_SCALE = [
+    "#E5EDF9",  # very light blue
+    "#86A8E7",  # mid blue
+    "#264E86",  # deep blue (matches brand)
+]
 
 SEGMENT_MAP_DEFAULT = {
     1: "Lost Customers",
@@ -325,6 +338,13 @@ def show(DATA_DIR: Path = Path("data")):
                 color_discrete_map=SEGMENT_COLOR_MAP,
                 color="segment",
             )
+            fig_seg.update_traces(
+                hovertemplate=(
+                    "<b>Segment:</b> %{x}<br>"
+                    "<b>Rules:</b> %{y:,}"
+                    "<extra></extra>"
+                )
+            )
             fig_seg.update_layout(
                 xaxis_title="Segment",
                 yaxis_title="Rules",
@@ -425,7 +445,7 @@ def show(DATA_DIR: Path = Path("data")):
         edge_y += [y0, y1, None]
     edge_trace = go.Scatter(
         x=edge_x, y=edge_y, mode="lines", hoverinfo="none",
-        line=dict(color="rgba(140,140,140,0.45)", width=1),
+        line=dict(color=PALETTE["edge_light"], width=1),
     )
 
     # node trace
@@ -437,10 +457,17 @@ def show(DATA_DIR: Path = Path("data")):
         x=node_x, y=node_y,
         mode="markers",
         textposition="top center",
-        hovertext=[f"{n}<br>Strength: {ns[n]:.2f}" for n in ns.index],
+        hovertext=[
+            f"<b>Product:</b> {n}<br><b>Strength:</b> {ns[n]:.2f}"
+            for n in ns.index
+        ],
         hoverinfo="text",
-        marker=dict(size=size, color=PALETTE["green"], line=dict(
-            width=1, color=PALETTE["blue"]), opacity=0.9),
+        marker=dict(
+            size=size,
+            color=PALETTE["node_base"],
+            line=dict(width=1, color=PALETTE["blue"]),
+            opacity=0.95,
+        ),
     )
 
     st.markdown(
@@ -458,8 +485,12 @@ def show(DATA_DIR: Path = Path("data")):
     traces = [edge_trace, node_trace]
     if hi_choice != "(none)" and hi_choice in G:
         nbrs = set(G.neighbors(hi_choice)) | {hi_choice}
-        colors = [PALETTE["orange"] if n == hi_choice else (
-            "#6EC5A3" if n in nbrs else "#B5C3D1") for n in ns.index]
+        colors = [
+            PALETTE["node_focus"] if n == hi_choice
+            else PALETTE["node_neighbor"] if n in nbrs
+            else PALETTE["node_dim"]
+            for n in ns.index
+        ]
         opac = [1.0 if n in nbrs else 0.25 for n in ns.index]
         node_trace.marker.color = colors
         node_trace.marker.opacity = opac
@@ -474,7 +505,7 @@ def show(DATA_DIR: Path = Path("data")):
                 hi_x += [x0, x1, None]
                 hi_y += [y0, y1, None]
         hi_edge = go.Scatter(x=hi_x, y=hi_y, mode="lines",
-                             line=dict(color=PALETTE["orange"], width=2.5),
+                             line=dict(color=PALETTE["node_focus"], width=2.5),
                              hoverinfo="none")
         traces = [edge_trace, hi_edge, node_trace]
 
