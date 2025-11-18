@@ -29,7 +29,6 @@ data/*.sav
 data/*.pkl
 
 # ---- Cache / Temp ----
-.streamlit/
 .cache/
 .cache_data/
 .DS_Store

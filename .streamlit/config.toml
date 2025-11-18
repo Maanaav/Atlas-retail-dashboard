@@ -1,0 +1,6 @@
+[theme]
+base="light"
+
+[client]
+# This hides the entire settings/hamburger menu, which prevents the user from accessing the theme selector.
+toolbarMode = "minimal"
