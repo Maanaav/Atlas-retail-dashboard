@@ -22,11 +22,12 @@ def time_dynamics_helpbar():
         )
     with c2.popover("📊 How to read these chart", use_container_width=True):
         st.markdown(
-            "- **Line:** monthly retail turnover for the selected region."
-            "- **3-month moving average:** smoother trend overlay on top of raw monthly values."
-            "- **Decomposition:**  breaks the series into **trend**, **seasonality**, and **residual noise**."
-            "- **Category comparison:** compares each industry's share of **ABS turnover**"
-            "(last 12 months) with its share of all **mined UK rules**."
+            """
+            - **Line:** monthly retail turnover for the selected region.
+            - **3-month moving average:** smoother trend overlay on top of raw monthly values.
+            - **Decomposition:**  breaks the series into **trend**, **seasonality**, and **residual noise**.
+            - **Category comparison:** compares each industry's share of **ABS turnover** (last 12 months) with its share of all **mined UK rules**.
+            """
         )
     with c3.popover("🌀 What the decomposition means", use_container_width=True):
         st.markdown(
