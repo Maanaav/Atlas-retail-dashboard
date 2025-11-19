@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from pathlib import Path
+import re
 
 ABS_FILE = Path("data/ABS.csv")
 RULES_FILE = Path("data/all_segment_rules_with_industry.csv")
@@ -16,68 +17,120 @@ PALETTE = {
 }
 
 
-# ---------- Helper explainers ----------
+# ---------- small helpers / layout ----------
 
 def insights_helpbar():
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c1.popover("🧭 What this tab does", use_container_width=True):
-        st.markdown(
-            """
-- Turns mined **co-purchase rules** + **ABS retail data** into actions.
-- You can switch **audience focus** (store-ready vs analytics).
-- Cards are opinionated summaries, not exploratory plots.
+    """Top helper strip – three wide popover buttons."""
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        with st.popover("🧭 What this tab does", use_container_width=True):
+            st.markdown(
+                """
+- Turns mined UK basket rules into **store-ready recommendations**.
+- Adds **ABS turnover** so patterns aren’t read in isolation.
+- Lets you switch between **Store-ready** and **Analytics** views.
 """
-        )
-    with c2.popover("📂 How cards are filled", use_container_width=True):
-        st.markdown(
-            """
-Each card follows a fixed template:
+            )
 
-- **What we see** – one-sentence pattern.
-- **Why it matters** – operational consequence.
-- **Action** – imperative, ≤ 12 words.
-- **Evidence** – support · confidence · lift (+ ABS stat if relevant).
-- **Confidence** – High / Medium / Low based on lift and prevalence.
+    with col2:
+        with st.popover("📁 How cards are filled", use_container_width=True):
+            st.markdown(
+                """
+Each card follows the same structure:
+
+- **What we see** – one-line summary of the pattern.  
+- **Why it matters** – commercial / operational impact.  
+- **Action** – short imperative step.  
+- **Evidence** – support · confidence · lift (+ ABS stat if used).  
+- **Confidence** – High / Medium, based on lift and stability.
 """
-        )
-    with c3.popover("🛡️ Limits", use_container_width=True):
-        st.markdown(
-            """
-- Rules are from **UK e-commerce**, ABS gives **Australian context** only.
-- Avoid over-reacting to high lift on **very low support**.
-- Use these as **decision aids**, not automated policy.
+            )
+
+    with col3:
+        with st.popover("🛡️ Limits & guardrails", use_container_width=True):
+            st.markdown(
+                """
+- Rules are from **UCI Online Retail II (UK)**, not local tills.  
+- ABS is used only as **macro context**, not to prove causality.  
+- Avoid acting on **tiny-support spikes** even with high lift.  
+- Use this tab to **inform** decisions, not to auto-allocate budgets.
 """
-        )
+            )
 
 
-def insights_docs():
-    with st.expander("How insights are generated (details)", expanded=False):
-        st.markdown(
-            """
-### Data sources
-- **Rules** – mined from UCI Online Retail II (UK) after cleaning:
-  UK-only, positive quantity/price, no cancellations; basketised by invoice.
-- **Metrics** – support (share of baskets), confidence (P(B|A)), lift (> 1 desirable).
-- **Context** – ABS 8501.0 monthly retail turnover, aggregated and normalised to $M.
-
-### Rule selection
-- For *bread-and-butter* cards: we pick rules with **highest support**.
-- For *lapsing customers*: we filter to the corresponding **customer segment** and
-  then pick rules with **highest support** there.
-- For technical bundle insight: we use **highest lift** within filters.
-
-### Audience focus
-- **Store-ready view** – minimal jargon, shelf and promo actions.
-- **Analytics view** – the same patterns but with explicit metrics.
-
-### Guardrails
-- Extreme lift with tiny support is flagged as lower confidence.
-- ABS is used to check directionality (e.g. December peaks in household goods).
-"""
-        )
+def _hero(title, tagline, mode_label):
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(90deg, #1e3a8a, #0f766e);
+            border-radius:20px; padding:16px 20px; margin:8px 0 16px 0;
+            color:white; display:flex; align-items:center; justify-content:space-between;">
+            <div>
+              <div style="font-size:18px; font-weight:600; margin-bottom:4px;">{title}</div>
+              <div style="opacity:.9; font-size:13px;">{tagline}</div>
+            </div>
+            <div style="
+                padding:6px 12px; border-radius:999px;
+                background:rgba(15,23,42,0.3); font-size:12px;">
+                Current view: <b>{mode_label}</b>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
-# ---------- ABS helpers ----------
+def _insight_card(title, what, why, action, evidence, confidence, icon="🧩"):
+    st.markdown(
+        f"""
+        <div style="
+          border:1px solid #e5e7eb; border-radius:16px;
+          padding:16px 18px; margin-top:12px; background:#ffffff;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="font-size:18px;">{icon}</div>
+            <div style="font-weight:700; font-size:16px; color:#0f172a;">{title}</div>
+          </div>
+          <div style="margin-top:10px; color:#111827; font-size:14px;">
+            <b>What we see:</b> {what}
+          </div>
+          <div style="margin-top:4px; color:#374151; font-size:14px;">
+            <b>Why it matters:</b> {why}
+          </div>
+          <div style="margin-top:6px; color:#111827; font-size:14px;">
+            <b>Action:</b> {action}
+          </div>
+          <div style="margin-top:6px; color:#6b7280; font-size:13px;">
+            <i>{evidence}</i>
+          </div>
+          <div style="margin-top:6px; color:#4b5563; font-size:12px;">
+            Confidence: <b>{confidence}</b>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ---------- data cleaners ----------
+
+def clean_product_name(x: str) -> str:
+    if not isinstance(x, str):
+        return x
+
+    # strip IDs like "85123A | " at the front
+    x = re.sub(r"^\s*[A-Za-z0-9]+\s*\|\s*", "", x)
+
+    # strip leading numeric codes like "22423 "
+    x = re.sub(r"^\s*\d+\s+", "", x)
+
+    # kill stray markdown asterisks from original strings
+    x = x.replace("*", "")
+
+    # collapse whitespace
+    x = re.sub(r"\s{2,}", " ", x).strip()
+    return x
+
 
 def _detect_abs_cols(csv_path: Path):
     hdr = pd.read_csv(csv_path, nrows=0)
@@ -100,16 +153,11 @@ def _detect_abs_cols(csv_path: Path):
 def load_abs(path: Path, keep_years: int = 5):
     if not path.exists():
         return pd.DataFrame(), {}
-
     region_col, date_col, value_col, industry_col = _detect_abs_cols(path)
     need = [c for c in [region_col, date_col, value_col, industry_col] if c]
     if not all([region_col, date_col, value_col]):
-        return pd.DataFrame(), {
-            "region": region_col,
-            "date": date_col,
-            "value": value_col,
-            "industry": industry_col,
-        }
+        return pd.DataFrame(), {"region": region_col, "date": date_col,
+                                "value": value_col, "industry": industry_col}
 
     df = pd.read_csv(path, usecols=need, low_memory=False)
     ren = {region_col: "region", date_col: "date", value_col: "turnover"}
@@ -130,32 +178,70 @@ def load_abs(path: Path, keep_years: int = 5):
     if "industry" in df.columns:
         keys.append("industry")
     df = df.groupby(keys, as_index=False)["turnover"].sum()
-    return df, {
-        "region": region_col,
-        "date": date_col,
-        "value": value_col,
-        "industry": industry_col,
-    }
+    return df, {"region": region_col, "date": date_col,
+                "value": value_col, "industry": industry_col}
 
+
+def _detect_segment_col(df: pd.DataFrame):
+    for c in ["segment", "customer_segment", "segment_label"]:
+        if c in df.columns:
+            return c
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def load_rules(path: Path):
+    if not path.exists():
+        return pd.DataFrame()
+
+    df = pd.read_csv(path, low_memory=False)
+    df.columns = df.columns.str.strip().str.lower()
+
+    keep = [c for c in ["antecedent", "consequent", "support",
+                        "confidence", "lift", "industry", "segment"]
+            if c in df.columns]
+    if not keep:
+        return pd.DataFrame()
+
+    df = df[keep].dropna()
+    for c in ["support", "confidence", "lift"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    for c in ["antecedent", "consequent"]:
+        if c in df.columns:
+            df[c] = (df[c].astype(str)
+                     .str.replace(r"[\{\}\[\]\(\)\"']", "", regex=True)
+                     .apply(clean_product_name))
+
+    df = df.dropna(subset=["support", "confidence", "lift"])
+    return df
+
+
+# ---------- ABS helpers ----------
 
 def _latest_yoy(abs_df: pd.DataFrame) -> float:
     if abs_df.empty:
         return 0.0
-    m = abs_df.assign(M=abs_df["date"].dt.to_period("M")).groupby("M", as_index=False)["turnover"].sum()
+    m = abs_df.assign(M=abs_df["date"].dt.to_period("M")) \
+              .groupby("M", as_index=False)["turnover"].sum()
     m["date"] = m["M"].dt.to_timestamp()
     if len(m) < 13:
         return 0.0
     latest = m.iloc[-1]["turnover"]
-    last_year = m.iloc[-13]["turnover"]
-    return float((latest - last_year) / last_year * 100.0) if last_year else 0.0
+    prev = m.iloc[-13]["turnover"]
+    if prev == 0:
+        return 0.0
+    return float((latest - prev) / prev * 100.0)
 
 
 def _top_industry(abs_df: pd.DataFrame) -> str:
-    if "industry" not in abs_df.columns or abs_df.empty:
+    if abs_df.empty or "industry" not in abs_df.columns:
         return "Total"
     last12 = abs_df[abs_df["date"] >= abs_df["date"].max() - pd.DateOffset(months=12)]
-    g = last12.groupby("industry", as_index=False)["turnover"].sum().sort_values("turnover", ascending=False)
-    return str(g.iloc[0]["industry"]) if not g.empty else "Total"
+    t = last12.groupby("industry", as_index=False)["turnover"].sum() \
+              .sort_values("turnover", ascending=False)
+    return str(t.iloc[0]["industry"]) if not t.empty else "Total"
 
 
 def _december_uplift(abs_df: pd.DataFrame) -> float:
@@ -165,235 +251,138 @@ def _december_uplift(abs_df: pd.DataFrame) -> float:
     tmp["month"] = tmp["date"].dt.month
     last24 = tmp[tmp["date"] >= tmp["date"].max() - pd.DateOffset(months=24)]
     monthly = last24.groupby("month", as_index=False)["turnover"].mean()
-    if monthly.empty or "turnover" not in monthly:
+    if monthly.empty:
         return 0.0
-    mean_all = monthly["turnover"].mean()
+    mean_all = float(monthly["turnover"].mean())
     dec = monthly.loc[monthly["month"] == 12, "turnover"]
-    return (float(dec.iloc[0]) / float(mean_all) - 1) * 100.0 if not dec.empty and mean_all > 0 else 0.0
+    if dec.empty or mean_all == 0:
+        return 0.0
+    return float(dec.iloc[0] / mean_all - 1) * 100.0
 
 
-# ---------- Rules helpers ----------
+# ---------- rule selection helpers ----------
 
-@st.cache_data(show_spinner=False)
-def load_rules(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(path, low_memory=False)
-    df.columns = df.columns.str.strip().str.lower()
-
-    keep = [
-        c
-        for c in [
-            "antecedent",
-            "consequent",
-            "support",
-            "confidence",
-            "lift",
-            "industry",
-            "segment",
-        ]
-        if c in df.columns
-    ]
-    if not keep:
-        return pd.DataFrame()
-
-    df = df[keep].dropna()
-
-    for c in ("support", "confidence", "lift"):
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    for c in ("antecedent", "consequent"):
-        if c in df.columns:
-            df[c] = (
-                df[c]
-                .astype(str)
-                .str.replace(r"[\{\}\[\]\(\)\"']", "", regex=True)
-                # drop any "123 | " product IDs
-                .str.replace(r"\s*\d+\s*\|\s*", "", regex=True)
-                .str.strip()
-            )
-
-    df = df.dropna(subset=["support", "confidence", "lift"])
-    return df
+def _pick_top_rule(df: pd.DataFrame):
+    if df.empty:
+        return None
+    return df.sort_values(
+        ["support", "confidence", "lift"],
+        ascending=[False, False, False]
+    ).iloc[0]
 
 
-def _rules_summary(df_rules: pd.DataFrame):
-    if df_rules.empty:
-        return 0, 0.0
-    return len(df_rules), float(df_rules["lift"].mean())
+def _pick_lapsing_rule(df: pd.DataFrame, seg_col: str | None):
+    if seg_col is None or seg_col not in df.columns or df.empty:
+        return None, None
+    seg_vals = sorted(df[seg_col].dropna().unique())
+    if not seg_vals:
+        return None, None
+    lapsing_value = seg_vals[-1]
+    sub = df[df[seg_col] == lapsing_value]
+    if sub.empty:
+        return None, lapsing_value
+    return _pick_top_rule(sub), lapsing_value
 
 
-def pick_rules(df: pd.DataFrame, segment_val, industry_val):
-    """Return 3 rules: top_lift, top_support, top_support_lapsing."""
-    work = df.copy()
-
-    # filters
-    if industry_val is not None and "industry" in work.columns:
-        work = work[work["industry"] == industry_val]
-
-    if segment_val is not None and "segment" in work.columns:
-        work = work[work["segment"] == segment_val]
-
-    if work.empty:
-        return None, None, None
-
-    # 1) strongest bundle (lift)
-    r_lift = work.sort_values("lift", ascending=False).head(1)
-
-    # 2) bread-and-butter (support)
-    r_sup = work.sort_values("support", ascending=False).head(1)
-
-    # 3) lapsing customers (segment that represents "slipping")
-    r_slip = None
-    if "segment" in df.columns:
-        # try typical code 2 or 3 for lapsing; fall back to max segment id
-        seg_vals = sorted(df["segment"].dropna().unique())
-        if len(seg_vals):
-            # heuristic: last value = riskiest / lapsing
-            lapsing_code = seg_vals[-1]
-            slip = work[work["segment"] == lapsing_code]
-            if not slip.empty:
-                r_slip = slip.sort_values("support", ascending=False).head(1)
-
-    return r_lift, r_sup, r_slip
-
-
-# ---------- UI helpers ----------
-
-def _hero(title, tagline):
-    st.markdown(
-        f"""
-<div style="
-    background: linear-gradient(90deg, #1e3a8a, #0f766e);
-    border-radius:20px; padding:18px 22px; margin:10px 0 18px 0;
-    color:white; display:flex; align-items:center; gap:14px;">
-    <div style="font-size:18px; font-weight:600;">{title}</div>
-    <div style="opacity:.85;">{tagline}</div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-
-def _insight_card(title, what, why, action, evidence, conf, icon="✅"):
-    st.markdown(
-        f"""
-<div style="
-  border:1px solid #e5e7eb;
-  border-radius:14px;
-  padding:14px 16px;
-  margin-top:10px;
-  background:#fcfdff;">
-  <div style="display:flex;align-items:center;gap:8px;">
-    <div style="font-size:18px">{icon}</div>
-    <div style="font-weight:700; font-size:15.5px;">{title}</div>
-  </div>
-  <div style="margin-top:8px; color:#0f172a;">{what}</div>
-  <div style="color:#334155; margin-top:4px;"><b>Why:</b> {why}</div>
-  <div style="margin-top:6px;"><b>Action:</b> {action}</div>
-  <div style="color:#64748b; margin-top:4px; font-size:13px;"><i>{evidence}</i></div>
-  <div style="margin-top:6px; font-size:12px; color:#475569;">
-    Confidence: <b>{conf}</b>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-
-# ---------- Main entry ----------
+# ---------- main tab ----------
 
 def show():
     st.title("Insights")
     insights_helpbar()
 
-    abs_df, _det = load_abs(ABS_FILE)
+    abs_df, _ = load_abs(ABS_FILE)
     rules_df = load_rules(RULES_FILE)
 
-    n_rules, avg_lift = _rules_summary(rules_df)
-    yoy = _latest_yoy(abs_df)
-    top_cat = _top_industry(abs_df)
-    dec_uplift = _december_uplift(abs_df)
+    if rules_df.empty:
+        st.error(f"No rules available at {RULES_FILE}.")
+        return
 
-    _hero("Insights", "Mined rules → clear actions, grounded in ABS retail trends.")
+    seg_col = _detect_segment_col(rules_df)
 
-    # header row: logo + title + audience toggle
-    col_logo, col_hdr, col_mode = st.columns([1, 3, 2], vertical_alignment="center")
-    with col_logo:
-        if LOGO_FILE.exists():
-            st.image(str(LOGO_FILE), width=56)
-    with col_hdr:
-        st.subheader("Insight summary ↪")
-        st.caption("Filters tailor the rules; audience focus controls how technical the cards are.")
-    with col_mode:
-        audience_mode = st.radio(
-            "Audience focus",
+    # ----- focus filters -----
+    left_filters, right_mode = st.columns([2, 1])
+
+    with left_filters:
+        # segment display mapping
+        seg_label_map = {}
+        seg_focus_label = "All customers"
+        seg_focus_value = None
+        if seg_col:
+            seg_vals = sorted(rules_df[seg_col].dropna().unique())
+            if pd.api.types.is_numeric_dtype(rules_df[seg_col]):
+                default_labels = [
+                    "New shoppers",
+                    "Repeat shoppers",
+                    "High-value shoppers",
+                    "Lapsing customers",
+                ]
+                for i, v in enumerate(seg_vals):
+                    seg_label_map[v] = default_labels[i] if i < len(default_labels) else f"Segment {v}"
+            else:
+                seg_label_map = {v: str(v) for v in seg_vals}
+
+            options = ["All customers"] + [seg_label_map[v] for v in seg_vals]
+            seg_focus_label = st.selectbox("Focus segment", options, index=0)
+            if seg_focus_label != "All customers":
+                # inverse lookup
+                for raw, lab in seg_label_map.items():
+                    if lab == seg_focus_label:
+                        seg_focus_value = raw
+                        break
+
+        ind_focus_label = "All industries"
+        ind_focus_value = None
+        if "industry" in rules_df.columns:
+            inds = sorted(rules_df["industry"].astype(str).unique())
+            ind_focus_label = st.selectbox(
+                "Focus industry",
+                ["All industries"] + inds,
+                index=0,
+            )
+            if ind_focus_label != "All industries":
+                ind_focus_value = ind_focus_label
+
+    with right_mode:
+        mode = st.radio(
+            "View mode",
             ["Store-ready view", "Analytics view"],
             horizontal=True,
-            label_visibility="visible",
+            index=0,
         )
 
+    # apply filters
+    focus = rules_df.copy()
+    if seg_focus_value is not None and seg_col:
+        focus = focus[focus[seg_col] == seg_focus_value]
+    if ind_focus_value is not None and "industry" in focus.columns:
+        focus = focus[focus["industry"].astype(str) == ind_focus_value]
+
+    if focus.empty:
+        st.warning("No rules for this combination of segment and industry.")
+        return
+
     # KPIs
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Rules shown (all)", f"{n_rules:,}")
-    c2.metric("Average lift", f"{avg_lift:.2f}" if n_rules else "—")
-    c3.metric("Top category (ABS)", top_cat)
-    c4.metric("YoY turnover (ABS)", f"{yoy:+.1f}%" if abs_df.size else "—")
+    n_rules = int(len(focus))
+    avg_lift = float(focus["lift"].mean())
+    yoy = _latest_yoy(abs_df)
+    top_cat = _top_industry(abs_df)
 
-    # focus filters (segment + industry)
-    st.markdown("### Focus filters")
+    _hero(
+        "Insights",
+        "Use mined rules plus ABS context to decide what to pair and where to focus.",
+        mode_label=mode,
+    )
 
-    f1, f2 = st.columns(2)
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Rules in focus", f"{n_rules:,}")
+    k2.metric("Average lift", f"{avg_lift:.2f}")
+    k3.metric("Top ABS category", top_cat)
+    k4.metric("YoY turnover (ABS)", f"{yoy:+.1f}%" if abs_df.size else "—")
 
-    # segment filter
-    segment_val = None
-    segment_label = "All customers"
-    if "segment" in rules_df.columns:
-        seg_unique = sorted(rules_df["segment"].dropna().unique())
-        seg_labels = ["All customers"]
-        seg_map = {"All customers": None}
-        # heuristic, map ordered codes to human labels
-        human_names = [
-            "New shoppers",
-            "Repeat customers",
-            "High-value regulars",
-            "At-risk / lapsing customers",
-        ]
-        for i, val in enumerate(seg_unique):
-            label = human_names[i] if i < len(human_names) else f"Segment {val}"
-            seg_labels.append(label)
-            seg_map[label] = val
-
-        with f1:
-            chosen_label = st.selectbox("Focus segment", seg_labels, index=0)
-        segment_val = seg_map[chosen_label]
-        segment_label = chosen_label
-    else:
-        with f1:
-            st.selectbox("Focus segment", ["All customers"], index=0, disabled=True)
-
-    # industry filter
-    industry_val = None
-    industry_label = "All industries"
-    if "industry" in rules_df.columns and not rules_df.empty:
-        inds = sorted(rules_df["industry"].dropna().astype(str).unique())
-        inds_opts = ["All industries"] + inds
-        with f2:
-            chosen_ind = st.selectbox("Focus industry", inds_opts, index=0)
-        if chosen_ind != "All industries":
-            industry_val = chosen_ind
-            industry_label = chosen_ind
-    else:
-        with f2:
-            st.selectbox("Focus industry", ["All industries"], index=0, disabled=True)
-
-    # filtered rule picks
-    r_lift, r_sup, r_slip = pick_rules(rules_df, segment_val, industry_val)
-
-    # quick ABS sparkline
+    # ABS sparkline
     if not abs_df.empty:
-        m = abs_df.assign(M=abs_df["date"].dt.to_period("M")).groupby("M", as_index=False)["turnover"].sum()
+        m = abs_df.assign(M=abs_df["date"].dt.to_period("M")) \
+                  .groupby("M", as_index=False)["turnover"].sum()
         m["date"] = m["M"].dt.to_timestamp()
         fig = px.line(
             m.tail(24),
@@ -406,109 +395,108 @@ def show():
         fig.update_layout(margin=dict(l=0, r=0, t=60, b=10), height=240)
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("### Focused insights")
+    dec_uplift = _december_uplift(abs_df)
 
-    # ---------- Store-ready view (manager style) ----------
-    if audience_mode == "Store-ready view":
-        # bread-and-butter combo (top support)
-        if r_sup is not None:
-            rs = r_sup.iloc[0]
-            a = str(rs["antecedent"])
-            c = str(rs["consequent"])
+    # pick rules
+    bread_rule = _pick_top_rule(focus)
+    lapsing_rule, lapsing_value = _pick_lapsing_rule(focus, seg_col)
+
+    # text labels for segment / industry context
+    seg_context = seg_focus_label
+    ind_context = ind_focus_label
+
+    # -------- store vs analytics text --------
+
+    if mode == "Store-ready view":
+        # bread-and-butter combo
+        if bread_rule is not None:
+            a = bread_rule["antecedent"]
+            c = bread_rule["consequent"]
+            sup = float(bread_rule["support"])
             _insight_card(
                 title="Protect your bread-and-butter combo",
-                what=f"Customers most often buy **{a}** together with **{c}** "
-                     f"in this focus ({segment_label}, {industry_label}).",
+                what=(
+                    f"Customers most often buy <b>{a}</b> together with <b>{c}</b> "
+                    f"in this focus ({seg_context}, {ind_context})."
+                ),
                 why="This pair is a stable driver of everyday revenue.",
                 action="Place them together and keep both fully stocked.",
-                evidence=f"Support={rs['support']:.3f} (share of baskets).",
-                conf="High" if rs["support"] > 0.01 else "Medium",
-                icon="🍞",
+                evidence=f"Support≈{sup:.3f} (share of baskets).",
+                confidence="High" if sup >= 0.02 else "Medium",
+                icon="🧱",
             )
 
-        # lapsing customers (top support within lapsing segment)
-        if r_slip is not None:
-            rsl = r_slip.iloc[0]
-            a2 = str(rsl["antecedent"])
-            c2 = str(rsl["consequent"])
+        # lapsing customers
+        if lapsing_rule is not None:
+            a = lapsing_rule["antecedent"]
+            c = lapsing_rule["consequent"]
+            sup = float(lapsing_rule["support"])
+            seg_label = (
+                seg_label_map.get(lapsing_value, f"Segment {lapsing_value}")
+                if seg_col and lapsing_value is not None
+                else "Lapsing customers"
+            )
             _insight_card(
                 title="Win back slipping customers",
-                what=f"At-risk customers most often pick **{a2}** with **{c2}**.",
-                why="Good candidate combo for win-back offers.",
-                action="Use this combo in reactivation emails or SMS.",
-                evidence=f"Support={rsl['support']:.3f} within lapsing segment.",
-                conf="Medium",
-                icon="🔄",
+                what=(
+                    f"{seg_label} who still shop most often buy <b>{a}</b> "
+                    f"with <b>{c}</b>."
+                ),
+                why="Highlighting this pair may recover at-risk shoppers.",
+                action="Feature this combo in outbound offers or at aisle ends.",
+                evidence=f"Support≈{sup:.3f} within lapsing segment.",
+                confidence="Medium",
+                icon="🩹",
             )
 
-        # seasonal push using ABS
-        _insight_card(
-            title="Prepare for the December lift",
-            what=f"Household-related spend rises about {dec_uplift:+.1f}% in December vs average.",
-            why="Shoppers move early on gifts and home items.",
-            action="Order extra stock by mid-November in key categories.",
-            evidence="ABS 8501.0 monthly turnover; simple 24-month average comparison.",
-            conf="Medium-High",
-            icon="🎄",
-        )
-
-    # ---------- Analytics view (analyst style) ----------
-    else:
-        # high-lift bundle
-        if r_lift is not None:
-            rl = r_lift.iloc[0]
+    else:  # Analytics view
+        if bread_rule is not None:
+            a = bread_rule["antecedent"]
+            c = bread_rule["consequent"]
+            sup = float(bread_rule["support"])
+            conf = float(bread_rule["confidence"])
+            lift = float(bread_rule["lift"])
             _insight_card(
-                title=f"Strongest bundle in focus: {rl['antecedent']} → {rl['consequent']}",
-                what=f"Lift={rl['lift']:.2f}, Support={rl['support']:.3f}, "
-                     f"Confidence={rl['confidence']:.2f}.",
-                why="Lift > 1 implies the consequent is meaningfully enriched "
-                    "when the antecedent is present.",
-                action="Run an attach-rate experiment around this pair.",
-                evidence=f"Top-lift rule under segment={segment_label}, industry={industry_label}.",
-                conf="High" if rl["lift"] >= 1.5 and rl["support"] > 0.003 else "Medium",
+                title=f"Bread-and-butter combo: {a} → {c}",
+                what=(
+                    f"Top rule in focus: support={sup:.3f}, "
+                    f"confidence={conf:.2f}, lift={lift:.2f}."
+                ),
+                why="High lift at non-trivial support marks a dependable attach pattern.",
+                action="Use this pair as a benchmark basket for promo tests.",
+                evidence=(
+                    f"Rule from filtered UK baskets; focus={seg_context}, {ind_context}. "
+                    f"ABS YoY turnover={yoy:+.1f}%, December uplift≈{dec_uplift:+.1f}%."
+                ),
+                confidence="High" if (lift >= 2.0 and sup >= 0.01) else "Medium",
                 icon="📊",
             )
 
-        # bread-and-butter (top support)
-        if r_sup is not None:
-            rs = r_sup.iloc[0]
-            _insight_card(
-                title="Bread-and-butter driver (top support)",
-                what=f"Highest-support rule in focus: {rs['antecedent']} → {rs['consequent']} "
-                     f"with Support={rs['support']:.3f}.",
-                why="High support rules anchor demand and improve forecast stability.",
-                action="Model price and promo elasticity for this pair.",
-                evidence=f"Support={rs['support']:.3f}, Lift={rs['lift']:.2f}.",
-                conf="High" if rs["support"] > 0.01 else "Medium",
-                icon="📈",
+        if lapsing_rule is not None:
+            a = lapsing_rule["antecedent"]
+            c = lapsing_rule["consequent"]
+            sup = float(lapsing_rule["support"])
+            conf = float(lapsing_rule["confidence"])
+            lift = float(lapsing_rule["lift"])
+            seg_label = (
+                seg_label_map.get(lapsing_value, f"Segment {lapsing_value}")
+                if seg_col and lapsing_value is not None
+                else "Lapsing customers"
             )
-
-        # lapsing segment rule (if available)
-        if r_slip is not None:
-            rsl = r_slip.iloc[0]
             _insight_card(
-                title="Lapsing-customer signal",
-                what=f"In the lapsing segment, {rsl['antecedent']} → {rsl['consequent']} "
-                     f"is the top-support rule.",
-                why="This pattern can inform personalised reactivation strategies.",
-                action="Build uplift models using this pair as a candidate feature.",
-                evidence=f"Lapsing-segment Support={rsl['support']:.3f}, Lift={rsl['lift']:.2f}.",
-                conf="Medium",
-                icon="🔍",
+                title=f"Lapsing segment combo: {a} → {c}",
+                what=(
+                    f"Within {seg_label}, the strongest rule has "
+                    f"support={sup:.3f}, confidence={conf:.2f}, lift={lift:.2f}."
+                ),
+                why="This shows what remaining spend from at-risk shoppers looks like.",
+                action="Use as seed for targeted retention / CRM experiments.",
+                evidence=f"Segment column={seg_col or 'n/a'}; lapsing code={lapsing_value}.",
+                confidence="Medium",
+                icon="🧪",
             )
-
-        _insight_card(
-            title="Seasonality anchor from ABS",
-            what=f"December turnover is roughly {dec_uplift:+.1f}% above the 24-month mean.",
-            why="Useful baseline when interpreting year-end spikes in rule activity.",
-            action="Align experiment windows with known seasonal peaks.",
-            evidence="ABS 8501.0; turnover aggregated to national level, 24-month window.",
-            conf="Medium-High",
-            icon="📐",
-        )
 
     st.caption(
-        "This tab uses filtered rule picks (segment + industry) to surface a bread-and-butter "
-        "combo, a lapsing-customer combo, and—optionally—a strongest-lift bundle, then "
-        "frames them either for store-ready decisions or analytics deep-dives."
+        "This tab converts UK association rules into store-ready moves and analytical summaries, "
+        "with ABS providing a macro-level reality check."
     )
