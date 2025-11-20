@@ -479,7 +479,19 @@ def show(DATA_DIR: Path = Path("data")):
     )
 
     # highlight
-    hi_choice = st.selectbox("Search Product", ["(none)"] + list(ns.index))
+    product_options = list(ns.index)
+
+    if product_options:
+        # Default to the first product instead of "(none)"
+        select_options = ["(none)"] + product_options
+        hi_choice = st.selectbox(
+            "Search Product",
+            select_options,
+            index=1,          # <- first real product
+        )
+    else:
+        hi_choice = "(none)"
+
     nbrs = None
     focus_nodes = list(ns.index)
     traces = [edge_trace, node_trace]
